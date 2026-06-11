@@ -64,8 +64,6 @@ export async function loadSoundFont(buffer: ArrayBuffer): Promise<void> {
   console.log('[SoundFont] Loaded in', elapsed, 's, sfontId:', sfontId);
 
   jsSynth.setGain(0.8);
-  jsSynth.setReverb(0.5, 0.5, 0.8, 0.3);
-  jsSynth.setReverbOn(true);
 
   useProjectStore.getState().setSoundFontLoaded(true);
   useProjectStore.getState().setSoundFontId(sfontId);
