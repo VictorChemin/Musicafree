@@ -31,8 +31,10 @@ export default function App() {
     setSfError(null);
     try {
       await loadSoundFontFromUrl('/soundfonts/FluidR3_GM.sf2');
-    } catch {
-      setSfError('SoundFont file not found. Download FluidR3_GM.sf2 and place it in public/soundfonts/.');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[App] SoundFont load error:', msg);
+      setSfError(msg);
     } finally {
       setSfLoading(false);
     }

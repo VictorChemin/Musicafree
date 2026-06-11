@@ -30,7 +30,6 @@ declare const JSSynth: JSSynthGlobal;
 
 let jsSynthInstance: ReturnType<JSSynthGlobal['Synthesizer']['prototype']> | null = null;
 let audioContext: AudioContext | null = null;
-let sfBuffer: ArrayBuffer | null = null;
 
 export async function initAudioEngine(): Promise<void> {
   await Tone.start();
@@ -38,30 +37,57 @@ export async function initAudioEngine(): Promise<void> {
 }
 
 export async function loadSoundFont(buffer: ArrayBuffer): Promise<void> {
-  sfBuffer = buffer;
   if (!audioContext) {
-    audioContext = Tone.getContext().rawContext as AudioContext;
+    await initAudioEngine();
+  }
+  if (!audioContext) {
+    throw new Error('AudioContext not available. Click to initialize audio first.');
   }
 
+  console.log('[SoundFont] Waiting for FluidSynth WASM...');
   await JSSynth.waitForReady();
+  console.log('[SoundFont] FluidSynth ready, creating synthesizer...');
 
   const synth = new JSSynth.Synthesizer();
   synth.init(audioContext.sampleRate);
+  console.log('[SoundFont] Synthesizer initialized at', audioContext.sampleRate, 'Hz');
+
   const node = synth.createAudioNode(audioContext, 4096);
   node.connect(audioContext.destination);
+  console.log('[SoundFont] AudioNode created and connected');
+
+  const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(1);
+  console.log('[SoundFont] Loading SF2 file:', sizeMB, 'MB...');
+  const startTime = performance.now();
 
   const sfontId = await synth.loadSFont(buffer);
 
+  const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+  console.log('[SoundFont] Loaded in', elapsed, 's, sfontId:', sfontId);
+
   jsSynthInstance = synth;
   soundFontManager.setSynth(synth as unknown as import('js-synthesizer/dist/lib/ISynthesizer').default);
+
+  synth.setGain(0.8);
+  synth.setReverb(0.5, 0.5, 0.8, 0.3);
+  synth.setReverbOn(true);
 
   useProjectStore.getState().setSoundFontLoaded(true);
   useProjectStore.getState().setSoundFontId(sfontId);
 }
 
 export async function loadSoundFontFromUrl(url: string): Promise<void> {
+  console.log('[SoundFont] Fetching from:', url);
   const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  const contentLength = response.headers.get('content-length');
+  console.log('[SoundFont] File size:', contentLength ? (parseInt(contentLength) / 1024 / 1024).toFixed(1) + ' MB' : 'unknown');
+
   const buffer = await response.arrayBuffer();
+  console.log('[SoundFont] Fetched:', (buffer.byteLength / 1024 / 1024).toFixed(1), 'MB');
+
   await loadSoundFont(buffer);
 }
 
