@@ -8,10 +8,6 @@ export default defineConfig({
     outDir: 'dist',
   },
   server: {
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
     fs: {
       allow: ['..'],
     },
