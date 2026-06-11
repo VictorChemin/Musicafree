@@ -1,36 +1,10 @@
 import * as Tone from 'tone';
+import AudioWorkletNodeSynthesizer from 'js-synthesizer/dist/lib/AudioWorkletNodeSynthesizer.js';
 import { useProjectStore } from '../store/projectStore';
 import { soundFontManager } from './SoundFontManager';
 import { synthManager } from './SynthManager';
 
-interface ISynthWorklet {
-  isInitialized(): boolean;
-  init(sampleRate: number): void;
-  close(): void;
-  createAudioNode(ctx: AudioContext): AudioNode;
-  loadSFont(bin: ArrayBuffer): Promise<number>;
-  midiNoteOn(chan: number, key: number, vel: number): void;
-  midiNoteOff(chan: number, key: number): void;
-  midiAllNotesOff(chan?: number): void;
-  midiProgramSelect(chan: number, sfontId: number, bank: number, presetNum: number): void;
-  setGain(gain: number): void;
-  setReverb(roomsize: number, damping: number, width: number, level: number): void;
-  setReverbOn(on: boolean): void;
-  setChorus(voiceCount: number, level: number, speed: number, depthMs: number, type: number): void;
-  setChorusOn(on: boolean): void;
-  waitForVoicesStopped(): Promise<void>;
-  unloadSFont(id: number): void;
-}
-
-interface JSSynthGlobal {
-  waitForReady: () => Promise<void>;
-  Synthesizer: new () => ISynthWorklet;
-  AudioWorkletNodeSynthesizer: new () => ISynthWorklet;
-}
-
-declare const JSSynth: JSSynthGlobal;
-
-let jsSynth: ISynthWorklet | null = null;
+let jsSynth: AudioWorkletNodeSynthesizer | null = null;
 let audioContext: AudioContext | null = null;
 let workletLoaded = false;
 
@@ -49,10 +23,7 @@ async function ensureWorkletLoaded(): Promise<void> {
   await audioContext.audioWorklet.addModule('/soundfonts/libfluidsynth-2.4.6.js');
   console.log('[Worklet] Loading js-synthesizer worklet...');
   await audioContext.audioWorklet.addModule('/soundfonts/js-synthesizer.worklet.js');
-  console.log('[Worklet] Modules loaded');
-
-  await JSSynth.waitForReady();
-  console.log('[Worklet] FluidSynth WASM ready');
+  console.log('[Worklet] Modules loaded, WASM ready in worklet');
 
   workletLoaded = true;
 }
@@ -68,7 +39,7 @@ export async function loadSoundFont(buffer: ArrayBuffer): Promise<void> {
   await ensureWorkletLoaded();
 
   console.log('[SoundFont] Creating AudioWorkletNodeSynthesizer...');
-  jsSynth = new JSSynth.AudioWorkletNodeSynthesizer();
+  jsSynth = new AudioWorkletNodeSynthesizer();
   jsSynth.init(audioContext.sampleRate);
   console.log('[SoundFont] Init at', audioContext.sampleRate, 'Hz');
 
