@@ -9,8 +9,12 @@ let audioContext: AudioContext | null = null;
 let workletLoaded = false;
 
 export async function initAudioEngine(): Promise<void> {
+  audioContext = new AudioContext();
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+  console.log('[Audio] Context created, state:', audioContext.state, 'rate:', audioContext.sampleRate);
   await Tone.start();
-  audioContext = Tone.getContext().rawContext as AudioContext;
 }
 
 async function ensureWorkletLoaded(): Promise<void> {
