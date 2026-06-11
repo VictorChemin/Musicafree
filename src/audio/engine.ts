@@ -3,37 +3,58 @@ import { useProjectStore } from '../store/projectStore';
 import { soundFontManager } from './SoundFontManager';
 import { synthManager } from './SynthManager';
 
+interface ISynthWorklet {
+  isInitialized(): boolean;
+  init(sampleRate: number): void;
+  close(): void;
+  createAudioNode(ctx: AudioContext): AudioNode;
+  loadSFont(bin: ArrayBuffer): Promise<number>;
+  midiNoteOn(chan: number, key: number, vel: number): void;
+  midiNoteOff(chan: number, key: number): void;
+  midiAllNotesOff(chan?: number): void;
+  midiProgramSelect(chan: number, sfontId: number, bank: number, presetNum: number): void;
+  setGain(gain: number): void;
+  setReverb(roomsize: number, damping: number, width: number, level: number): void;
+  setReverbOn(on: boolean): void;
+  setChorus(voiceCount: number, level: number, speed: number, depthMs: number, type: number): void;
+  setChorusOn(on: boolean): void;
+  waitForVoicesStopped(): Promise<void>;
+  unloadSFont(id: number): void;
+}
+
 interface JSSynthGlobal {
   waitForReady: () => Promise<void>;
-  Synthesizer: new () => {
-    isInitialized(): boolean;
-    init(sampleRate: number): void;
-    close(): void;
-    createAudioNode(ctx: AudioContext, frameSize?: number): AudioNode;
-    loadSFont(bin: ArrayBuffer): Promise<number>;
-    midiNoteOn(chan: number, key: number, vel: number): void;
-    midiNoteOff(chan: number, key: number): void;
-    midiAllNotesOff(chan?: number): void;
-    midiProgramSelect(chan: number, sfontId: number, bank: number, presetNum: number): void;
-    setGain(gain: number): void;
-    setReverb(roomsize: number, damping: number, width: number, level: number): void;
-    setReverbOn(on: boolean): void;
-    setChorus(voiceCount: number, level: number, speed: number, depthMs: number, type: number): void;
-    setChorusOn(on: boolean): void;
-    waitForVoicesStopped(): Promise<void>;
-    unloadSFont(id: number): void;
-  };
-  AudioWorkletNodeSynthesizer: new () => unknown;
+  Synthesizer: new () => ISynthWorklet;
+  AudioWorkletNodeSynthesizer: new () => ISynthWorklet;
 }
 
 declare const JSSynth: JSSynthGlobal;
 
-let jsSynthInstance: ReturnType<JSSynthGlobal['Synthesizer']['prototype']> | null = null;
+let jsSynth: ISynthWorklet | null = null;
 let audioContext: AudioContext | null = null;
+let workletLoaded = false;
 
 export async function initAudioEngine(): Promise<void> {
   await Tone.start();
   audioContext = Tone.getContext().rawContext as AudioContext;
+}
+
+async function ensureWorkletLoaded(): Promise<void> {
+  if (workletLoaded) return;
+  if (!audioContext) throw new Error('AudioContext not initialized');
+
+  console.log('[Worklet] Setting up WASM memory...');
+  await audioContext.audioWorklet.addModule('/soundfonts/worklet-init.js');
+  console.log('[Worklet] Loading libfluidsynth module...');
+  await audioContext.audioWorklet.addModule('/soundfonts/libfluidsynth-2.4.6.js');
+  console.log('[Worklet] Loading js-synthesizer worklet...');
+  await audioContext.audioWorklet.addModule('/soundfonts/js-synthesizer.worklet.js');
+  console.log('[Worklet] Modules loaded');
+
+  await JSSynth.waitForReady();
+  console.log('[Worklet] FluidSynth WASM ready');
+
+  workletLoaded = true;
 }
 
 export async function loadSoundFont(buffer: ArrayBuffer): Promise<void> {
@@ -44,33 +65,32 @@ export async function loadSoundFont(buffer: ArrayBuffer): Promise<void> {
     throw new Error('AudioContext not available. Click to initialize audio first.');
   }
 
-  console.log('[SoundFont] Waiting for FluidSynth WASM...');
-  await JSSynth.waitForReady();
-  console.log('[SoundFont] FluidSynth ready, creating synthesizer...');
+  await ensureWorkletLoaded();
 
-  const synth = new JSSynth.Synthesizer();
-  synth.init(audioContext.sampleRate);
-  console.log('[SoundFont] Synthesizer initialized at', audioContext.sampleRate, 'Hz');
+  console.log('[SoundFont] Creating AudioWorkletNodeSynthesizer...');
+  jsSynth = new JSSynth.AudioWorkletNodeSynthesizer();
+  jsSynth.init(audioContext.sampleRate);
+  console.log('[SoundFont] Init at', audioContext.sampleRate, 'Hz');
 
-  const node = synth.createAudioNode(audioContext, 4096);
+  console.log('[SoundFont] Creating AudioWorklet node...');
+  const node = jsSynth.createAudioNode(audioContext);
   node.connect(audioContext.destination);
-  console.log('[SoundFont] AudioNode created and connected');
+  console.log('[SoundFont] AudioWorkletNode connected');
+
+  soundFontManager.setSynth(jsSynth as unknown as import('js-synthesizer/dist/lib/ISynthesizer').default);
 
   const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(1);
   console.log('[SoundFont] Loading SF2 file:', sizeMB, 'MB...');
   const startTime = performance.now();
 
-  const sfontId = await synth.loadSFont(buffer);
+  const sfontId = await jsSynth.loadSFont(buffer);
 
   const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
   console.log('[SoundFont] Loaded in', elapsed, 's, sfontId:', sfontId);
 
-  jsSynthInstance = synth;
-  soundFontManager.setSynth(synth as unknown as import('js-synthesizer/dist/lib/ISynthesizer').default);
-
-  synth.setGain(0.8);
-  synth.setReverb(0.5, 0.5, 0.8, 0.3);
-  synth.setReverbOn(true);
+  jsSynth.setGain(0.8);
+  jsSynth.setReverb(0.5, 0.5, 0.8, 0.3);
+  jsSynth.setReverbOn(true);
 
   useProjectStore.getState().setSoundFontLoaded(true);
   useProjectStore.getState().setSoundFontId(sfontId);
@@ -209,8 +229,9 @@ export function destroyEngine() {
   Tone.Transport.cancel();
   synthManager.destroy();
   soundFontManager.destroy();
-  if (jsSynthInstance) {
-    jsSynthInstance.close();
-    jsSynthInstance = null;
+  if (jsSynth) {
+    jsSynth.close();
+    jsSynth = null;
   }
+  workletLoaded = false;
 }
